@@ -2,6 +2,7 @@ import sys
 import csv
 import random
 import itertools
+import functools
 import argparse
 
 import numpy as np
@@ -9,8 +10,6 @@ import scipy.special
 import pandas as pd
 import torch
 import einops
-from rfutils import memoize
-from rfutils import buildup
 
 try:
     import genbmm
@@ -45,6 +44,34 @@ def prod(xs):
     for x in xs:
         y *= x
     return y
+
+def buildup(iterable):
+    """ Build up
+
+    Example:
+    >>> list(buildup("abcd"))
+    [('a',), ('a', 'b'), ('a', 'b', 'c'), ('a', 'b', 'c', 'd')]
+
+    """
+    so_far = []
+    for x in iterable:
+        so_far.append(x)
+        yield tuple(so_far)
+
+def memoize(f):
+    cache = {}
+
+    def wrapper(*args):
+        if args in cache:
+            return cache[args]
+        else:
+            cache[args] = result = f(*args)
+            return result
+
+    wrapper.cache = cache
+    wrapper = functools.wraps(f)(wrapper)
+    
+    return wrapper        
 
 def stationary(M):
     """ Find the stationary distribution in a way that is differentiable """
