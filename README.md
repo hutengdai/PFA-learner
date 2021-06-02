@@ -5,6 +5,8 @@ Prerequisites: Python 3, PyTorch.
 
 When `pfa.py` is run on the command line, it will fit and evaluate a PFA on the desired training and testing data. Training results are output to `stdout`.
 
+The data we used comes from https://github.com/gouskova/inductive_projection_learner/tree/master/data.
+
 Usage:
 
 ```
