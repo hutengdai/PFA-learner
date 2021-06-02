@@ -219,7 +219,7 @@ class SimplePFA(PFA):
             starting_state_distro = self.starting_state_distro
         elif starting_state is not None:
             # if an individual starting state is provided, then start from a one-hot distribution on that state
-            starting_state_distro = self.starting_state_distro
+            starting_state_distro = self.one_hot(starting_state, self.num_states)
             
         # Forward algorithm:
         sequence = tuple(sequence)
@@ -629,7 +629,7 @@ class Logspace:
         pspace_stationary = stationary(self.to_exp(self.state_transition_matrix))
         return (pspace_stationary + eps).log()
 
-class LogspaceSimplePFA(SimplePFA, Logspace):
+class LogspaceSimplePFA(Logspace, SimplePFA):
     pass
 
 def strictly_local_transition_matrix(inventory_size, k=2):
@@ -1034,13 +1034,15 @@ def main(input_file,
          seed=DEFAULT_DATA_SEED,
          perm_test_num_samples=DEFAULT_PERM_TEST_NUM_SAMPLES,
          **kwds):
-    # model_class is either 'sp', 'sl', or a number of states
+    # model_class is either 'sp', 'sl', 'sp_sl', or a number of states
     first_line = True
     random.seed(seed)
     data = shuffled(get_txt_corpus_data(input_file))
     phone2ix, ix2phone, training_data, dev = process_data(data)
     num_symbols = len(ix2phone)
     d = kwds.copy()
+    print("Training data = ", input_file, file=sys.stderr)
+    print("Nonce testing data = ", test_file, file=sys.stderr)
     print("Training set size =", len(training_data), file=sys.stderr)
     print("Dev set size =", len(dev), file=sys.stderr)
     print("Segment inventory size = ", len(ix2phone), file=sys.stderr)
