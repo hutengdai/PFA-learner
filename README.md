@@ -4,6 +4,7 @@ This is the sample code for our SIGMORPHON 2021 paper "Simple induction of (dete
 Prerequisites: Python 3, PyTorch. 
 
 Usage:
-- Step 1: Install all modules in rfutils from https://github.com/Futrell/rfutils. 
 
-- Step 2: From Github clone the repository to the directory on your computer 
+```
+$ python pfa.py new_pfa.py --model_class 1024 --lang navajo --print_every 1000
+```
