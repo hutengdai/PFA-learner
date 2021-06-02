@@ -12,9 +12,12 @@ import torch
 
 try:
     import genbmm
-    import entmax
 except ModuleNotFoundError:
     genbmm = None
+
+try:
+    import entmax
+except ModuleNotFoundError:    
     entmax = None
 
 LOG2 = np.log(2)
