@@ -45,6 +45,9 @@ def prod(xs):
         y *= x
     return y
 
+def string_power(V, k):
+    return itertools.product(*[range(V) for _ in range(k)])
+
 def buildup(iterable):
     """ Build up
 
@@ -71,7 +74,20 @@ def memoize(f):
     wrapper.cache = cache
     wrapper = functools.wraps(f)(wrapper)
     
-    return wrapper        
+    return wrapper
+
+def one_hot(k, n):
+    y = torch.zeros(n)
+    y[k] = 1
+    return y
+
+def reverse_buildup(xs):
+    # abcd -> iterator of tuples of [d, cd, bcd, abcd]
+    return map(tuple, map(reversed, buildup(reversed(xs))))
+
+def all_same(xs):
+    x, *rest = xs
+    return all(x == y for y in rest)
 
 def stationary(M):
     """ Find the stationary distribution in a way that is differentiable """
@@ -83,9 +99,6 @@ def stationary(M):
     against = torch.zeros(n, device=M.device)
     against[-1] = 1
     return torch.solve(against[:, newaxis], A).solution.T[-1].T  # craziness
-
-def identity(x):
-    return x
 
 class PFA:
     # Define the p-space field:
@@ -173,7 +186,7 @@ class SimplePFA(PFA):
     def __init__(self, E, T, starting_state=None, starting_state_distro=None, device=None):
         """ A PFA over an alphabet of symbols X with states Q. 
 
-        T : a transition matrix of shape Q x X x Q, where T[i,j,k] = p(q_k | q_j, x_k)
+        T : a transition matrix of shape Q x X x Q, where T[i,j,k] = p(q_k | q_i, x_j)
         E : an emission matrix of shape Q x X, where E[i,j] = p(x_j | q_i)
 
         """
@@ -199,14 +212,16 @@ class SimplePFA(PFA):
         self.starting_state_distro = starting_state_distro
 
     def logp_symbol_sequence(self, sequence, starting_state_distro=None, starting_state=None):
-        """ Log probability of sequence of symbols.""" 
+        """ Log probability of sequence of symbols."""
+        # Logic for starting state:
         assert starting_state_distro is None or starting_state is None
         if starting_state_distro is None and starting_state is None:
             starting_state_distro = self.starting_state_distro
         elif starting_state is not None:
             # if an individual starting state is provided, then start from a one-hot distribution on that state
             starting_state_distro = self.starting_state_distro
-        # Use the forward algorithm.        
+            
+        # Forward algorithm:
         sequence = tuple(sequence)
         q = starting_state_distro
         logp = 0.0
@@ -235,7 +250,7 @@ class SimplePFA(PFA):
         Optionally, you can also provide distribution over starting states (vector of length Q).
         """
         if starting_state_distro is None:
-            q_t = self.stationary_Q
+            q_t = self.starting_state_distro
         else:
             q_t = starting_state_distro
         rows = [q_t]
@@ -323,15 +338,6 @@ class SimplePDFA(SimplePFA, PDFA):
         factorized_self = self.factored()
         return factorized_self + other
 
-    @property
-    def activity(self):
-        return pdfa_norm(self.E)
-
-def pdfa_norm(E):
-    """ Norm of a conditional distribution according to Wen & Ray (2012: 1136) """
-    minmax = E.max(-1).values.log() - E.min(-1).values.log()
-    return minmax.max(-1).values    
-
 class FactorPDFA(PDFA):
     def __init__(self, Es, Ts, starting_states=None, device=None):
         self.E = Es # list of QX
@@ -353,11 +359,6 @@ class FactorPDFA(PDFA):
     @property
     def num_symbols(self):
         return self.E[0].shape[-1]
-
-    @property
-    def factor_norms(self):
-        """ Norm of a PDFA according to Wen & Ray (2012: 1136) """
-        return list(map(pdfa_norm, self.E))
 
     def product(self, other):
         """ Return product with another factor machine """
@@ -389,7 +390,7 @@ class FactorPDFA(PDFA):
 
 class HomogenousFactorPDFA(FactorPDFA):
     """ Factor machine where each factor has the same number of states.
-    This enables much faster computations. """
+    This enables much faster computations using Torch. """
     
     @property
     def num_factors(self):
@@ -402,11 +403,6 @@ class HomogenousFactorPDFA(FactorPDFA):
     @property
     def num_symbols(self):
         return self.E.shape[-1]
-
-    @property
-    def factor_norms(self):
-        """ Norm of a PDFA according to Wen & Ray (2012: 1136) """
-        return pdfa_norm(self.E)
 
     def logp_symbol_sequence(self, sequence, starting_states=None):
         if starting_states is None:
@@ -450,12 +446,12 @@ class HomogenousFactorPDFA(FactorPDFA):
         starting_states = [0 for _ in range(num_factors)]
         starting_states[BOUNDARY_SYMBOL_INDEX] = 1
 
-        # start with an inactive E matrix
-        E = torch.full((num_factors, k, num_symbols), cls.div(1.0, num_symbols)) # or k+1 for LT/PT?
+        # start with an inactive E matrix (uniform distribution)
+        E = torch.full((num_factors, k, num_symbols), cls.div(1.0, num_symbols)) 
         # parameters populate the E matrix only for the active state: 
         E[:, -1, :] = Es # shape AQX
         
-        T = T_generator(k, num_factors) # or k+1 for LT/PT?
+        T = T_generator(k, num_factors)
         
         assert T.shape[-1] == T.shape[-3] == 2        
         assert T.shape[-2] == num_symbols
@@ -496,8 +492,9 @@ flip = torch.Tensor([
 ])
 
 @memoize
-def old_strictly_piecewise_transition_matrices(k, n):
+def strictly_piecewise_transition_matrices(k, n):
     """ Generate transition matrices for 2-SP factor machines over inventory of n symbols """
+    assert k == 2
     T = torch.stack([stay for _ in range(n)]) # shape AQQ'
     T = T.unsqueeze(-2).repeat(1, 1, n, 1) # shape AQXQ'
     for i in range(n):
@@ -505,79 +502,16 @@ def old_strictly_piecewise_transition_matrices(k, n):
     return T
 
 @memoize
-def old_strictly_local_transition_matrices(k, n):
+def strictly_local_transition_matrices(k, n):
     """ Generate transition matrices for k-SL factor machines over inventory of n symbols """ 
     # in state q_{ab...c}, given d, go into state q_{b...cd}
     # there will be n^{k-1} factors
+    assert k == 2
     T = torch.stack([turn_off for _ in range(n)])
     T = T.unsqueeze(-2).repeat(1, 1, n, 1)
     for i in range(n):
         T[i, :, i, :] = turn_on
     return T
-
-def one_hot(k, n):
-    y = torch.zeros(n)
-    y[k] = 1
-    return y
-
-def reverse_buildup(xs):
-    # abcd -> iterator of tuples of [d, cd, bcd, abcd]
-    return map(tuple, map(reversed, buildup(reversed(xs))))
-
-def all_same(xs):
-    x, *rest = xs
-    return all(x == y for y in rest)
-
-def strictly_local_transition_matrices(k, n):
-    shape = (n,) * k + (k,k)
-    num_dims = len(shape)
-    T = torch.zeros(shape)
-    
-    goto_initial = one_hot(0, k).repeat(k, 1)
-    # By default, factors turn off 
-    T[num_dims*(colon,)] = goto_initial # by default always return to the initial state
-
-    for segments in string_power(n, k-1):
-        # for example, segments = abc
-        for prefix in reverse_buildup(segments): 
-            # for example, prefix = "bc"
-            *_, current = prefix # for example, current = c
-            k_prefix = len(prefix) # in the example, k_prefix = |bc| = 2
-            expanded_prefix = prefix + (colon,)*(len(segments) - k_prefix) # b,c,:
-            # upon seeing c, for all factors matching b,c,:, if they are in ANY state corresponding to having seen b (1),
-            # then they go into the state for having seen bc (2), otherwise they do the default.
-            compatible_states = [k_prefix - 1]
-            if k_prefix == k - 1 and all_same(segments): # hack. what is the elegant solution?
-                compatible_states.append(k_prefix)
-            for state in compatible_states:
-                T[expanded_prefix + (current, state)] = one_hot(k_prefix, k) 
-    return einops.rearrange(T.reshape(n**(k-1), n, k, k), "f x q1 q2 -> f q1 x q2")
-
-@memoize
-def strictly_piecewise_transition_matrices(k, n):
-    shape = (n,) * k + (k,k)
-    num_dims = len(shape)
-    T = torch.zeros(shape)
-    
-    stay = torch.eye(k)
-    # By default, factors turn off 
-    T[num_dims*(colon,)] = stay # by default always return to the initial state
-
-    for segments in string_power(n, k-1):
-        # for example, segments = abc
-        for prefix in reverse_buildup(segments): 
-            # for example, prefix = "bc"
-            *_, current = prefix # for example, current = c
-            k_prefix = len(prefix) # in the example, k_prefix = |bc| = 2
-            expanded_prefix = prefix + (colon,)*(len(segments) - k_prefix) # b,c,:
-            # upon seeing c, for all factors matching b,c,:, if they are in ANY state corresponding to having seen b (1),
-            # then they go into the state for having seen bc (2), otherwise they do the default.
-            compatible_states = [k_prefix - 1]
-            if k_prefix == k - 1 and all_same(segments): # weird special case for final state ... TODO is this right for SP?
-                compatible_states.append(k_prefix)
-            for state in compatible_states:
-                T[expanded_prefix + (current, state)] = one_hot(k_prefix, k)
-    return einops.rearrange(T.reshape(n**(k-1), n, k, k), "f x q1 q2 -> f q1 x q2")
 
 def sp_sl_slow(sp_Es, sl_E, sp_k=2, sl_k=2, device=None):
     # HomogenousFactorPDFA.sp_sl is much faster
@@ -642,12 +576,6 @@ class FastStrictlyPiecewisePDFA(HomogenousFactorPDFA):
             states = update_states(states, segment, need_copy=False)
 
 
-# Strictly k-local: Log probability only depends (k-1) preceding segments
-# I[ x_t : x_1, ... x_{t-k} | x_{t-k+1, ..., t-1} ] = 0
-
-# x_1, x_2, x_3, x_4, x_5
-# I[ x_4 : x_1, x_2 | x_3 ] = 0
-
 class Logspace:
     """ storing and manipulating log probabilities whenever possible """
     zero = -INF
@@ -701,15 +629,13 @@ class Logspace:
         pspace_stationary = stationary(self.to_exp(self.state_transition_matrix))
         return (pspace_stationary + eps).log()
 
-
 class LogspaceSimplePFA(SimplePFA, Logspace):
     pass
 
-def string_power(V, k):
-    return itertools.product(*[range(V) for _ in range(k)])
-
 def strictly_local_transition_matrix(inventory_size, k=2):
-    """ Transition matrix for an SL-k automaton """
+    """ Transition matrix for an SL-k automaton, to be used with SimplePDFA.
+    Only tested for k=2. """
+    assert k == 2
     T_shape = (inventory_size,)*(k+1)
     T = torch.zeros(T_shape)
     inventory = range(inventory_size)
@@ -777,11 +703,7 @@ def gradient_descent(model_class,
         E_logit = E_logit.to(device).detach().requires_grad_(True)
         T_logit = T_logit.to(device).detach().requires_grad_(True)
         params = [E_logit, T_logit]
-    elif model_class.startswith('sl'):
-        if model_class == "sl":
-            k = 2
-        else:
-            k = int(model_class.replace("sl", ""))
+    elif model_class == 'sl':
         E_logit = 1/init_temperature*torch.randn(num_symbols, num_symbols)
         E_logit = E_logit.to(device).detach().requires_grad_(True)
         T_logit = None
@@ -1039,7 +961,6 @@ def test_logspace_star_ab_example():
     ab = LogspaceSimplePFA((ab.E + EPSILON).log(), (ab.T + EPSILON).log())
     star_ab_tests(ab, p_halt)
 
-
 def get_txt_corpus_data(filename):
     """
     Reads input file and coverts it to list of lists. Word boundaries will be added later.
@@ -1164,7 +1085,7 @@ def main(input_file,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Induce and evaluate a PFA to model forms.')
     parser.add_argument("--lang", type=str, default="quechua", help="language data to use (by default Quechua)")
-    parser.add_argument("--model_class", type=str, default=DEFAULT_NUM_STATES, help="model class (integer, sp, sl, sp_sl, or slk for natural number k)")
+    parser.add_argument("--model_class", type=str, default=DEFAULT_NUM_STATES, help="model class (integer, sp, sl, sp_sl)")
     parser.add_argument("--num_epochs", type=int, default=DEFAULT_NUM_EPOCHS)
     parser.add_argument("--nondeterminism_penalty", type=float, default=0.0)
     parser.add_argument("--memory_mi_penalty", type=float, default=0.0)
