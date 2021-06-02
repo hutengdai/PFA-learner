@@ -9,7 +9,6 @@ import numpy as np
 import scipy.special
 import pandas as pd
 import torch
-import einops
 
 try:
     import genbmm
