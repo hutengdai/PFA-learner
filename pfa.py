@@ -707,7 +707,7 @@ def gradient_descent(model_class,
         E_logit = 1/init_temperature*torch.randn(num_symbols, num_symbols)
         E_logit = E_logit.to(device).detach().requires_grad_(True)
         T_logit = None
-        T = strictly_local_transition_matrix(num_symbols, k=k).to(device)        
+        T = strictly_local_transition_matrix(num_symbols, k=2).to(device)        
         params = [E_logit]
     elif model_class.startswith('sp_sl'):
         E_logit = 1/init_temperature*torch.randn(2, num_symbols, num_symbols)
