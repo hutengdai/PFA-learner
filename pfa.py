@@ -17,7 +17,7 @@ except ModuleNotFoundError:
 
 try:
     import entmax
-except ModuleNotFoundError:    
+except ModuleNotFoundError:
     entmax = None
 
 LOG2 = np.log(2)
@@ -75,7 +75,7 @@ def memoize(f):
 
     wrapper.cache = cache
     wrapper = functools.wraps(f)(wrapper)
-    
+
     return wrapper
 
 def one_hot(k, n):
@@ -100,7 +100,7 @@ def stationary(M):
     A[colons+(-1, colon,)] = 1 # A[:, -1, :]
     against = torch.zeros(n, device=M.device)
     against[-1] = 1
-    return torch.solve(against[:, newaxis], A).solution.T[-1].T  # craziness
+    return torch.linalg.solve(against[:, newaxis], A).solution.T[-1].T  # craziness
 
 class PFA:
     # Define the p-space field:
@@ -122,7 +122,7 @@ class PFA:
 
     def entropy(self, ps, eps=EPSILON):
         logs = self.to_log(ps+eps)
-        return -(ps * logs).sum() / LOG2    
+        return -(ps * logs).sum() / LOG2
 
     def mutual_information(self, p_xy):
         p_y = self.sum(p_xy, axis=-2)
@@ -183,10 +183,10 @@ class PFA:
     def num_symbols(self):
         raise NotImplementedError
 
-    
+
 class SimplePFA(PFA):
     def __init__(self, E, T, starting_state=None, starting_state_distro=None, device=None):
-        """ A PFA over an alphabet of symbols X with states Q. 
+        """ A PFA over an alphabet of symbols X with states Q.
 
         T : a transition matrix of shape Q x X x Q, where T[i,j,k] = p(q_k | q_i, x_j)
         E : an emission matrix of shape Q x X, where E[i,j] = p(x_j | q_i)
@@ -222,7 +222,7 @@ class SimplePFA(PFA):
         elif starting_state is not None:
             # if an individual starting state is provided, then start from a one-hot distribution on that state
             starting_state_distro = self.one_hot(starting_state, self.num_states)
-            
+
         # Forward algorithm:
         sequence = tuple(sequence)
         q = starting_state_distro
@@ -245,7 +245,7 @@ class SimplePFA(PFA):
         return self.E.shape[-1]
 
     def state_matrix(self, sequence, starting_state_distro=None):
-        """ 
+        """
         Input: A sequence of symbols X^T and a distribution on starting states (vector of size Q).
         Output: A matrix T x Q where Q[t,q] = p(q_t | x_{<t}).
 
@@ -281,22 +281,22 @@ class SimplePFA(PFA):
 
     @property
     def state_information_lattice(self):
-        """ H[Q_{t+1} | Q_t, X_t], I[Q_{t+1}:X_t], I[Q_{t+1}:Q_t], and -I[Q_{t+1}:Q_t:X_t] 
+        """ H[Q_{t+1} | Q_t, X_t], I[Q_{t+1}:X_t], I[Q_{t+1}:Q_t], and -I[Q_{t+1}:Q_t:X_t]
         These sum to H[Q].
         """
         H_Q = self.entropy(self.stationary_Q)
-        
+
         # Next I[Q_{t+1} : X_t]
         p_QX = self.mul(self.stationary_Q.unsqueeze(-1), self.E)
         I_QX = self.mutual_information(p_QX)
 
-        
+
         p_QXQ = self.mul(p_QX.unsqueeze(-1), self.T)
-        p_QQ = self.sum(p_QXQ, axis=-2) 
-        I_QQ = self.mutual_information(p_QQ) 
-        
+        p_QQ = self.sum(p_QXQ, axis=-2)
+        I_QQ = self.mutual_information(p_QQ)
+
         H_Q_QX = self.entropy(p_QXQ) - self.entropy(p_QX)
-        
+
         synergy = H_Q - H_Q_QX - I_QX - I_QQ
 
         return torch.stack([H_Q_QX, I_QX, I_QQ, synergy], dim=-1)
@@ -320,7 +320,7 @@ class PDFA(PFA):
     def starting_state(self):
         assert self.entropy(self.starting_state_distro) == 0
         return self.starting_state_distro.argmax()
-    
+
     @property
     def nondeterminism(self):
         return torch.zeros(1)
@@ -393,7 +393,7 @@ class FactorPDFA(PDFA):
 class HomogenousFactorPDFA(FactorPDFA):
     """ Factor machine where each factor has the same number of states.
     This enables much faster computations using Torch. """
-    
+
     @property
     def num_factors(self):
         return self.E.shape[-3]
@@ -411,7 +411,7 @@ class HomogenousFactorPDFA(FactorPDFA):
             starting_states = self.starting_states
 
         num_factor_states = self.T.shape[-1]
-        
+
         qs = torch.stack([
             self.one_hot(starting_state, num_factor_states)
             for starting_state in starting_states
@@ -427,7 +427,7 @@ class HomogenousFactorPDFA(FactorPDFA):
             logp += log_numerators[segment] - logZ
             qs = self.matmul(qs, self.T[:, :, segment, :])
         return logp
-    
+
     def product(self, other):
         """ Return product with another factor machine with the same number of states in each sub-automaton """
         if isinstance(other, HomogenousFactorPDFA):
@@ -437,7 +437,7 @@ class HomogenousFactorPDFA(FactorPDFA):
             return HomogenousFactorPDFA(E, T, starting_states=starting_states, device=self.device)
         else:
             return other + self # use the class of other
-    
+
     # CONSTRUCTORS
 
     @classmethod
@@ -449,16 +449,16 @@ class HomogenousFactorPDFA(FactorPDFA):
         starting_states[BOUNDARY_SYMBOL_INDEX] = 1
 
         # start with an inactive E matrix (uniform distribution)
-        E = torch.full((num_factors, k, num_symbols), cls.div(1.0, num_symbols)) 
-        # parameters populate the E matrix only for the active state: 
+        E = torch.full((num_factors, k, num_symbols), cls.div(1.0, num_symbols))
+        # parameters populate the E matrix only for the active state:
         E[:, -1, :] = Es # shape AQX
-        
+
         T = T_generator(k, num_factors)
-        
-        assert T.shape[-1] == T.shape[-3] == 2        
+
+        assert T.shape[-1] == T.shape[-3] == 2
         assert T.shape[-2] == num_symbols
         assert T.shape[-4] == num_factors
-        
+
         return cls(E.to(device), T.to(device), starting_states=starting_states, device=device)
 
     @classmethod
@@ -467,7 +467,7 @@ class HomogenousFactorPDFA(FactorPDFA):
         sp = cls.sp(SP_Es, k=sp_k, device=device)
         sl = cls.sl(SL_Es, k=sl_k, device=device)
         return sp + sl
-        
+
     @classmethod
     def sp(cls, Es, k=2, device=None):
         return cls.featural_pdfa(strictly_piecewise_transition_matrices, Es, k, device=device)
@@ -505,7 +505,7 @@ def strictly_piecewise_transition_matrices(k, n):
 
 @memoize
 def strictly_local_transition_matrices(k, n):
-    """ Generate transition matrices for k-SL factor machines over inventory of n symbols """ 
+    """ Generate transition matrices for k-SL factor machines over inventory of n symbols """
     # in state q_{ab...c}, given d, go into state q_{b...cd}
     # there will be n^{k-1} factors
     assert k == 2
@@ -533,14 +533,14 @@ class FastStrictlyPiecewisePDFA(HomogenousFactorPDFA):
         *_, A, X = Es.shape
         assert A == X ** (k-1)
         self.E = torch.full((A, 2, X), self.div(1.0, X), device=device)
-        self.E[:, 1, :] = Es # shape AQX Q=2        
-        self.k = k        
+        self.E[:, 1, :] = Es # shape AQX Q=2
+        self.k = k
         self.device = device
         assert k == 2
 
     def update_states(self, states, segment, need_copy=True):
         if need_copy: # need to do this to get gradients properly
-            states = states.clone() 
+            states = states.clone()
         states[segment] = 1
         return states
 
@@ -565,7 +565,7 @@ class FastStrictlyPiecewisePDFA(HomogenousFactorPDFA):
         num_automata = self.E.shape[-3]
         states = torch.LongTensor([starting_state for _ in range(num_automata)]) # shape A
         states = states.unsqueeze(-1).repeat(1, self.num_symbols).unsqueeze(-2)
-        while True: 
+        while True:
             sub_probs = torch.gather(self.E, -2, states).squeeze(-2)
             log_numerators = self.to_log(sub_probs).sum(-2) # shape X, LOG SPACE
             logZ = log_numerators.logsumexp(-1)
@@ -606,7 +606,7 @@ class Logspace:
 
             #     Normally, a matrix multiplication
             #     computes out_{i,j} = sum_k A_{i,k} x B_{k,j}
-            
+
             #     A log domain matrix multiplication
             #     computes out_{i,j} = logsumexp_k log_A_{i,k} + log_B_{k,j}
             #     """
@@ -614,7 +614,7 @@ class Logspace:
                 log_A_expanded = log_A.unsqueeze(0).unsqueeze(-1) # m x n x 1      # if log_A is a vector, 1 x n x 1
             else:
                 log_A_expanded = log_A.unsqueeze(-1)
-            log_B_expanded = log_B.unsqueeze(-3) # 1 x n x p      
+            log_B_expanded = log_B.unsqueeze(-3) # 1 x n x p
             result = (log_A_expanded + log_B_expanded).logsumexp(dim=-2) # m x p
             if log_A.ndim == 1:
                 return result.squeeze(-2)
@@ -645,7 +645,7 @@ def strictly_local_transition_matrix(inventory_size, k=2):
         index = (...,) + tuple(context) + (last, last)
         T[index] = 1
     return T.reshape(inventory_size**(k-1), inventory_size, inventory_size)
-    
+
 def gradient_descent(model_class,
                      num_symbols,
                      training_data,
@@ -655,9 +655,9 @@ def gradient_descent(model_class,
                      yield_every=DEFAULT_PRINT_EVERY,
                      batch_size=DEFAULT_BATCH_SIZE,
                      init_temperature=DEFAULT_INIT_TEMPERATURE,
-                     activation=DEFAULT_ACTIVATION, 
+                     activation=DEFAULT_ACTIVATION,
                      **kwds):
-    """ Given a PFA class and training data, return a PFA which has been trained by gradient descent. 
+    """ Given a PFA class and training data, return a PFA which has been trained by gradient descent.
     Inputs:
     - model class: If an integer, then it's a PFA with that number of states.
     If it's a string "sp" or "sl", then it's strictly piecewise or strictly local.
@@ -670,7 +670,7 @@ def gradient_descent(model_class,
 
     - nondeterminism_penalty: Regularization parameter for nondeterminism in the transition matrix.
     - memory_mi_penalty: Regularization parameter for memory MI of the PFA.
-    
+
     - yield_every: Write intermediate results every x epochs. None: only write at end.
 
     Output:
@@ -678,7 +678,7 @@ def gradient_descent(model_class,
     """
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     num_states = model_class if isinstance(model_class, int) else None
-    
+
     if activation == "softmax":
         activation = torch.softmax
     elif activation == "sparsemax":
@@ -687,8 +687,8 @@ def gradient_descent(model_class,
         activation = entmax.entmax15
     else:
         raise ValueError("activation must one one of {softmax, sparsemax, entmax15}")
-    
-    assert all(sequence[-1] == BOUNDARY_SYMBOL_INDEX for sequence in training_data)            
+
+    assert all(sequence[-1] == BOUNDARY_SYMBOL_INDEX for sequence in training_data)
     if num_states:
         # If we're parameterizing by number of states, we need a way to enforce behavior around the boundary
         # To do that, we define an affine transformation T' = aT + b, such that T' respects boundaries
@@ -701,7 +701,7 @@ def gradient_descent(model_class,
 
     if num_states:
         E_logit = 1/init_temperature*torch.randn(num_states, num_symbols)
-        T_logit = 1/init_temperature*torch.randn(num_states, num_symbols, num_states)        
+        T_logit = 1/init_temperature*torch.randn(num_states, num_symbols, num_states)
         E_logit = E_logit.to(device).detach().requires_grad_(True)
         T_logit = T_logit.to(device).detach().requires_grad_(True)
         params = [E_logit, T_logit]
@@ -709,7 +709,7 @@ def gradient_descent(model_class,
         E_logit = 1/init_temperature*torch.randn(num_symbols, num_symbols)
         E_logit = E_logit.to(device).detach().requires_grad_(True)
         T_logit = None
-        T = strictly_local_transition_matrix(num_symbols, k=2).to(device)        
+        T = strictly_local_transition_matrix(num_symbols, k=2).to(device)
         params = [E_logit]
     elif model_class.startswith('sp_sl'):
         E_logit = 1/init_temperature*torch.randn(2, num_symbols, num_symbols)
@@ -743,7 +743,7 @@ def gradient_descent(model_class,
 
         # Get batch of training data
         if batch_size:
-            this_batch = random.sample(training_data, batch_size) 
+            this_batch = random.sample(training_data, batch_size)
         else:
             this_batch = training_data
 
@@ -754,10 +754,10 @@ def gradient_descent(model_class,
 
         # Get information lattice quantities
         if nondeterminism_penalty == 0 and memory_mi_penalty == 0: # fast path to avoid calculating stationary distribution if not necessary
-            info_penalties = 0 
+            info_penalties = 0
         else:
             info_penalties = nondeterminism_penalty * pfa.nondeterminism + memory_mi_penalty * pfa.memory_mi
-            
+
         loss = nll + info_penalties
 
         # Differentiate and optimize
@@ -886,7 +886,7 @@ def one_ab_example(p_halt=.25):
          [1, 0, 0, 0]],  # upon seeing c.
         # in state seen a,
         [[1, 0, 0, 0], # upon seeing # (never happens)
-         [0, 1, 0, 0], # upon seeing a, stay 
+         [0, 1, 0, 0], # upon seeing a, stay
          [0, 0, 1, 0], # upon seeing b, go to state seen ab
          [1, 0, 0, 0]], # upon seeing c, revert to initial
         # in state 2,
@@ -901,7 +901,7 @@ def one_ab_example(p_halt=.25):
          [0, 0, 1, 0]], # upon seeing c, go to state seen ab...
     ])
     return SimplePDFA(E, T)
-   
+
 
 def learn_example(pfa, legal_examples, illegal_examples, model_class="pfa", num_samples=10000, num_epochs=10000, outfile=sys.stderr, print_every=1, **kwds):
     if model_class == "pfa":
@@ -951,7 +951,7 @@ def star_ab_tests(ab, p_halt, eps=10**-6):
     assert np.abs(np.exp(ab.logp_symbol_sequence([2,1,2,0], starting_state=start)) - 0) < eps # p(aab#) = 0
     assert np.abs(np.exp(ab.logp_symbol_sequence([1,1,1,0], starting_state=start)) - ((1-p_halt)/3)*((1-p_halt)/2)**2 * p_halt) < eps # p(aaa#)
     assert np.abs(np.exp(ab.logp_symbol_sequence([2,1,1,0], starting_state=start)) - ((1-p_halt)/3)**2 * ((1-p_halt)/2)**1 * p_halt) < eps # p(baa#) = 0
-    
+
 def test_star_ab_example(pkg='torch'):
     p_halt = .25
     ab = star_ab_example(p_halt)
@@ -981,7 +981,7 @@ def evaluate(testfile, model, phone2ix, num_samples=DEFAULT_PERM_TEST_NUM_SAMPLE
     def score_form(form):
         indices = [phone2ix[p] for p in form.split(' ')] + [BOUNDARY_SYMBOL_INDEX]
         return model.logp_symbol_sequence(indices).item()
-    
+
     d = pd.read_csv(testfile, sep="\t", header=None)
     d.columns = ['form', 'legality']
     d['legality'] = d['legality'].map(lambda x: x.split('-')[0])
@@ -1018,12 +1018,12 @@ def process_data(string_training_data, dev=True, training_split=.2):
     ]
 
     if not dev:
-        training_data = as_ixs  
+        training_data = as_ixs
         dev = []
     else:
         split = int(len(as_ixs) * (1 - training_split))
-        training_data = as_ixs[:split] 
-        dev = as_ixs[split:] 
+        training_data = as_ixs[:split]
+        dev = as_ixs[split:]
 
     return phone2ix, ix2phone, training_data, dev
 
